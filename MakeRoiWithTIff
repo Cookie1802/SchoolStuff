@@ -6,13 +6,16 @@ from czitools.read_tools import read_tools
 
 #OVERVIEW. WHY ARE YOU DOING THIS PROJECT:
 #I have 3 viruses for the DRG, which were injected into some mice. Those 3 viruses had GCamP, which are labeled with GFP (green). 
-#I also stained the DRG slices with NFH, CGRP, and IB4. 
+#I also stained the DRG slices with NFH, CGRP, and IB4. They all label for different cell types.
 #NFH and CGRP were alternated between slides, as in, Slide 1: NFH, GFP, IB4, slide 2: CGRP, GFP, IB4, but both were stained with cyan. 
 #So, my code has cyan, green and magenta as the colors to compare. 
 #Since fluorescence values may differ between viruses ex: virus 1 green fluorescence is 800 and virus 2 is 700 or whatever, the threshold of each stain will be different for each virus. 
 #This also takes into account how the DRGs were sliced, if they washed off, etc.
 #To do that, I must make a histogram of the fluorescence value for each color. Then, we can say if a cell is gfp positive or not, and we can measure efficacy of a virus. 
 #For example, what % of a given slice does it label?
+#Next is which cells are labeled by both green and another color? NFH, CGRP and IB4 levels should be the same across all mice, approximately. Depeends on slice and quality. 
+#Once this looks good, then you can combine this with GFP, and we can see which viruses prefer which types of cells. As in, if there's green and cyan, that means it has a virus, and is a pep positive cell
+
 
 # CZI_FOLDERS = ["NFH", "CGRP"]
 # NP_FOLDERS = ["AVG-NFH-masks-numpy", "AVG-CGRP-masks-numpy"]

@@ -23,9 +23,6 @@ CZI_FOLDERS = ["CGRPtest"]
 NP_FOLDERS = ["AVG-CGRP-masks-numpy"]
 OUTPUT_FOLDER = "./output"
 
-#next is which cells are labeled by both? NFH, CGRP and IB4 should be the same, approcimately. Depeends on slice and quality. ONce this looks good, then you can combine with GFP
-
-
 # Process mask data into dictionary of {ROI_ID : [(x,y)...()]} - id coordinates dict
 # Initialize a dictionary to store the IDs and their coordinates (already done previously)
 def make_coordinate_dictionary(mask_data):

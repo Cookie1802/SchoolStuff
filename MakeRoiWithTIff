@@ -4,13 +4,24 @@ import pandas as pd
 import tifffile
 from czitools.read_tools import read_tools
 
-#Shouldn't there be more labeled cells?
+#OVERVIEW. WHY ARE YOU DOING THIS PROJECT:
+#I have 3 viruses for the DRG, which were injected into some mice. Those 3 viruses had GCamP, which are labeled with GFP (green). 
+#I also stained the DRG slices with NFH, CGRP, and IB4. 
+#NFH and CGRP were alternated between slides, as in, Slide 1: NFH, GFP, IB4, slide 2: CGRP, GFP, IB4, but both were stained with cyan. 
+#So, my code has cyan, green and magenta as the colors to compare. 
+#Since fluorescence values may differ between viruses ex: virus 1 green fluorescence is 800 and virus 2 is 700 or whatever, the threshold of each stain will be different for each virus. 
+#This also takes into account how the DRGs were sliced, if they washed off, etc.
+#To do that, I must make a histogram of the fluorescence value for each color. Then, we can say if a cell is gfp positive or not, and we can measure efficacy of a virus. 
+#For example, what % of a given slice does it label?
 
 # CZI_FOLDERS = ["NFH", "CGRP"]
 # NP_FOLDERS = ["AVG-NFH-masks-numpy", "AVG-CGRP-masks-numpy"]
 CZI_FOLDERS = ["CGRPtest"]
 NP_FOLDERS = ["AVG-CGRP-masks-numpy"]
 OUTPUT_FOLDER = "./output"
+
+#next is which cells are labeled by both? NFH, CGRP and IB4 should be the same, approcimately. Depeends on slice and quality. ONce this looks good, then you can combine with GFP
+
 
 # Process mask data into dictionary of {ROI_ID : [(x,y)...()]} - id coordinates dict
 # Initialize a dictionary to store the IDs and their coordinates (already done previously)

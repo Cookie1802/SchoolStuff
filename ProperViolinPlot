@@ -1,0 +1,453 @@
+import os
+import numpy as np
+import pandas as pd
+import tifffile
+import matplotlib.pyplot as plt
+import seaborn as sns
+from czitools.read_tools import read_tools
+
+# CZI_FOLDERS = ["NFH", "CGRP"]
+# NP_FOLDERS = ["AVG-NFH-masks-numpy", "AVG-CGRP-masks-numpy"]
+CZI_FOLDERS = ["CGRPAAV9allmice"]
+NP_FOLDERS = ["AVG-CGRP-masks-numpy"]
+OUTPUT_FOLDER = "./output"
+
+def plot_drg_with_rois(drg_image, roi_centers, avg_colours, thresholds, img_name):
+    """
+    Plots the DRG image and overlays ROI centers, color-coded by classification.
+    
+    Arguments:
+        drg_image    - The background DRG image (grayscale or composite).
+        roi_centers  - Dictionary {ROI_ID: (x, y) coordinates}.
+        avg_colours  - Dictionary {ROI_ID: (cyan, green, magenta) average intensities}.
+        thresholds   - Dictionary with intensity thresholds for C/G/M classification.
+        img_name     - Name for saving the output image.
+    """
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+    plt.figure(figsize=(10, 10))
+    gamma = 0.3  # Reduce for brighter images, increase for darker
+    drg_image = ((drg_image / np.max(drg_image)) ** gamma) * 255
+    plt.imshow(drg_image)
+
+    # Classification colors
+    colors = {"Cyan": "c", "Green": "g", "Magenta": "m", "Unlabeled": "w"}
+
+    for roi_id, (x, y) in roi_centers.items():
+        c_intensity, g_intensity, m_intensity = avg_colours[roi_id]
+
+        # **Only plot ROIs that exceed the threshold**
+        if c_intensity > thresholds["Cyan"]:  # Change to include other channels if needed
+            plt.scatter(x, y, color="r", edgecolors="black", s=10)
+
+        #Just cyan as a test
+        # if c_intensity > thresholds["Cyan"]:
+        #     color = "r"  # Red if above threshold
+        # else:
+        #     color = "c"  # Cyan if below
+
+        # Check if any channel intensity is above its threshold
+        # if c_intensity > thresholds["Cyan"] or g_intensity > thresholds["Green"] or m_intensity > thresholds["Magenta"]:
+        #     color = "r"  # Mark in red if above threshold
+        # else:
+        #     # Assign label color if below threshold
+        #     if c_intensity > thresholds["Cyan"]:
+        #         color = "c"
+        #     elif g_intensity > thresholds["Green"]:
+        #         color = "g"
+        #     elif m_intensity > thresholds["Magenta"]:
+        #         color = "m"
+        #     else:
+        #         color = "w"
+
+        #plt.scatter(x, y, color=color, edgecolors="black", s=40)
+
+    plt.title(f"ROI Classification Overlay: {img_name}")
+    plt.axis("off")
+    plt.savefig(f"{OUTPUT_FOLDER}/ROI_overlay_{img_name}.png", dpi=300)
+    plt.show()
+    plt.close()
+
+def compute_roi_centers(id_coordinates_dict):
+    """Computes the center (x, y) of each ROI from the list of coordinates."""
+    roi_centers = {}
+    for roi_id, coords in id_coordinates_dict.items():
+        # Compute mean x and y to find the centroid
+        x_center = int(np.mean([x for x, y in coords]))
+        y_center = int(np.mean([y for x, y in coords]))
+        roi_centers[roi_id] = (x_center, y_center)
+    
+    return roi_centers
+
+# Makes a violin plot for all mice CSV files in a folder. 
+# Use this to find how to get thresholds for each color
+def plot_violin(df, color_name, img_name):
+    """Generates and saves a violin plot of fluorescence intensity per mouse."""
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+    print(f"Generating violin plot for {color_name} channel of {img_name}")
+
+    plt.figure(figsize=(10, 6))
+    
+    # Make violin plot with Mouse_ID on x-axis
+    sns.violinplot(x="Mouse_ID", y=f"{color_name.lower()}_intensity", data=df, palette="pastel")
+
+    # Compute mean + std
+    channel_column = f"{color_name.lower()}_intensity"
+    channel_mean = df[channel_column].mean()
+    channel_std = df[channel_column].std()
+    threshold = channel_mean + channel_std
+
+    # Add horizontal line
+    plt.axhline(threshold, color="red", linestyle="--", label=f"Mean + 1SD = {threshold:.2f}")
+
+    plt.title(f"{color_name} Channel Violin Plot: {img_name}")
+    plt.xlabel("Mouse ID")
+    plt.ylabel("Intensity")
+    plt.xticks(rotation=45)  # Rotate labels for readability
+    plt.show()
+    plt.savefig(f"{OUTPUT_FOLDER}/{color_name}_violin_{img_name}.png")
+    plt.close()
+
+def plot_histogram(data, color_name, img_name):
+    """Generates and saves a histogram of fluorescence intensity for a given channel."""
+    # Ensure the output folder exists
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+    print(f"Generating histogram for {color_name} channel of {img_name}")
+    print(f"Data range: {np.min(data)} to {np.max(data)}")  # Print min and max of data
+
+    """Generates and saves a histogram of fluorescence intensity for a given channel."""
+    plt.hist(data.ravel(), bins=300, range=(0, 300), color=color_name, alpha=0.6)
+    plt.title(f"{color_name} Channel Histogram: {img_name}")
+    plt.xlabel("Intensity")
+    plt.ylabel("Frequency")
+    plt.show()
+    plt.savefig(f"{OUTPUT_FOLDER}/{color_name}_histogram_{img_name}.png")
+    plt.close()
+
+# Process mask data into dictionary of {ROI_ID : [(x,y)...()]} - id coordinates dict
+# Initialize a dictionary to store the IDs and their coordinates (already done previously)
+def make_coordinate_dictionary(mask_data):
+        id_coordinates_dict = {}
+        # Collect coordinates for each ID in the mask_data
+        for y in range(mask_data.shape[0]):  # Iterate through rows (Y-axis)
+            for x in range(mask_data.shape[1]):  # Iterate through columns (X-axis)
+                current_id = mask_data[y, x]
+                if current_id != 0:  # Exclude ID 0
+                    if current_id not in id_coordinates_dict:
+                        id_coordinates_dict[current_id] = []
+                    id_coordinates_dict[current_id].append((x, y))
+        return id_coordinates_dict
+
+# Destacks a czi file into 3 numpy arrays (per channel)
+def destack_czi(filepath):
+    print(filepath)
+    # Destack czi file into separate channels
+    array6d, mdata = read_tools.read_6darray(filepath, chunk_zyx=False)
+    cyan_data = array6d[0][0][0][0]
+    green_data = array6d[0][0][1][0]
+    magenta_data = array6d[0][0][2][0]
+
+    return cyan_data, green_data, magenta_data
+
+def destack_tiff(filepath):
+    """Reads a multi-channel TIFF file and extracts cyan, green, and magenta channels."""
+    img_array = tifffile.imread(filepath).astype(np.float32)  # Convert immediately to float
+
+    if img_array.ndim == 3 and img_array.shape[0] == 3:  # (Channels, H, W) format
+        img_array = np.transpose(img_array, (1, 2, 0))  # Rearrange to (H, W, Channels)
+    
+    if img_array.ndim == 3 and img_array.shape[-1] == 3:  # (H, W, 3)
+        cyan_data, green_data, magenta_data = img_array[:, :, 0], img_array[:, :, 1], img_array[:, :, 2]  # Unpack
+    else:
+        raise ValueError(f"Unexpected TIFF shape {img_array.shape} in {filepath}")
+    
+    return cyan_data, green_data, magenta_data
+
+def average_roi_colours(id_coordinates_dict, cyan_data, green_data, magenta_data):
+    # Initialize output dict {ROI_ID : (avg_cyan, avg_green, avg_magenta)}
+    avg_colours = {}
+    """
+    Iterate over all ROIs in mask dict
+        For each ROI initialize an output colour intensity list
+        For each point in each ROI:
+            - Access corresponding point in all 3 colour arrays
+            - Append intensity value to respective colour list
+        Average all 3 lists and store in output dict
+    """
+    if len(id_coordinates_dict) == 0:
+        return {}
+    
+    for roi_id in id_coordinates_dict: # Iterate over all ROIs
+        col_intensity_list = []
+        for coordinate in id_coordinates_dict[roi_id]: # Iterate over all ROI data points
+            x, y = coordinate
+            c_intensity = cyan_data[y, x]
+            g_intensity = green_data[y, x]
+            m_intensity = magenta_data[y, x]
+            col_intensity_list.append((c_intensity, g_intensity, m_intensity))
+        # TODO consider anomaly detection/removal of myelin based on
+        # potentially flat thresholding
+        # also consider impact of normalisation of each colour channel before/after averaging
+        avg_c = sum(col[0] for col in col_intensity_list) / len(col_intensity_list)
+        avg_g = sum(col[1] for col in col_intensity_list) / len(col_intensity_list)
+        avg_m = sum(col[2] for col in col_intensity_list) / len(col_intensity_list)
+        
+        avg_colours[roi_id] = (avg_c, avg_g, avg_m)
+    
+    return avg_colours
+
+def export_data(avg_colours, czi_img_path, czi_folder):
+    """Exports average intensities of each color channel per ROI to CSV along with classification (C, G, M)."""
+    
+    # Get ROI IDs and their corresponding average color intensities
+    roi_ids = list(avg_colours.keys())
+    
+    avg_cyan_values = [avg_colours[roi][0] for roi in roi_ids]
+    avg_green_values = [avg_colours[roi][1] for roi in roi_ids]
+    avg_magenta_values = [avg_colours[roi][2] for roi in roi_ids]
+
+    # Create a DataFrame with the results
+    output_df = pd.DataFrame({
+        "roi_id": roi_ids,
+        "cyan_intensity": avg_cyan_values,
+        "green_intensity": avg_green_values,
+        "magenta_intensity": avg_magenta_values,
+    })
+
+    # # Define the output folder and file path
+    # virus_folder = os.path.join(OUTPUT_FOLDER, czi_folder)  # Virus-specific folder
+    # os.makedirs(virus_folder, exist_ok=True)  # Create folder if it doesn't exist
+
+    #Process into output csv
+    outfile_name = f"out_{os.path.splitext(os.path.basename(czi_img_path))[0]}.csv"
+    outfile_path = os.path.join(OUTPUT_FOLDER, czi_folder, outfile_name)
+    output_df.to_csv(outfile_path, index=False, sep=",")
+
+def merge_csvs_for_virus(virus_folder):
+    """Merges all CSV files in a virus folder into a single DataFrame."""
+    all_files = [f for f in os.listdir(virus_folder) if f.endswith(".csv")]
+    dataframes = []
+
+    for file in all_files:
+        file_path = os.path.join(virus_folder, file)
+        df = pd.read_csv(file_path, sep=",")  # Ensure separator matches
+
+        # For the violin plot. Comment out if needed
+        # Extract mouse ID from filename (assuming file names are "out_Mouse1.csv", etc.)
+        mouse_id = os.path.splitext(file)[0].replace("out_", "")  
+        df["Mouse_ID"] = mouse_id  # Add Mouse ID column
+
+        dataframes.append(df)
+        print(f"Processing {file_path} with columns: {df.columns}")  # Debugging
+
+    if not dataframes:
+        print(f"No CSV files found in {virus_folder}")
+        return None
+
+    merged_df = pd.concat(dataframes, ignore_index=True)
+    return merged_df
+
+def process_and_export_all_drgs():
+    for i in range(len(CZI_FOLDERS)):
+        czi_folder = CZI_FOLDERS[i]
+        np_folder = NP_FOLDERS[i]
+        for czi_img in os.listdir(czi_folder):
+            if czi_img.endswith((".czi", ".tif", ".tiff")):
+                czi_img_path = os.path.join(czi_folder, czi_img)
+                # Destack czi file into separate channels
+                if czi_img.endswith(".czi"):
+                    cyan_data, green_data, magenta_data = destack_czi(czi_img_path)
+                else:
+                    cyan_data, green_data, magenta_data = destack_tiff(czi_img_path)
+
+                # Import masks from np
+                np_img = f"seg_{czi_img.split('.')[0]}AVG.tif.npy"
+                np_img_path = os.path.join(np_folder, np_img)
+                mask_data = np.load(np_img_path)
+
+                # Process mask data into dictionary of {ROI_ID : [(x,y)...()]} - id coordinates dict
+                # Initialize a dictionary to store the IDs and their coordinates (already done previously)
+                id_coordinates_dict = make_coordinate_dictionary(mask_data)
+
+                # Check dimensions match
+#                 if mask_data.shape != cyan_data.shape or \
+#                     mask_data.shape != green_data.shape or \
+#                     mask_data.shape != magenta_data.shape:
+#                     print(f"Data Dimension Mismatch for files: {czi_img_path} & {np_img_path}")
+#                     continue
+
+                if mask_data.shape != cyan_data.shape:
+                    print(f"Data Dimension Mismatch for {czi_img}")
+                    continue
+
+                # Initialize output dict {ROI_ID : (avg_cyan, avg_green, avg_magenta)}
+                avg_colours = average_roi_colours(id_coordinates_dict, cyan_data, green_data, magenta_data)
+                export_data(avg_colours, czi_img_path, czi_folder)
+
+def calculate_cyan_threshold():
+    virus_folder = os.path.join(OUTPUT_FOLDER, CZI_FOLDERS[0])
+    merged_df = merge_csvs_for_virus(virus_folder)
+
+    # Calculate threshold. For example: use mean + x*std for thresholding
+    # Change x to whatever you want to multiply std by
+    cyan_mean = merged_df["cyan_intensity"].mean()
+    cyan_std = merged_df["cyan_intensity"].std()
+    cyan_threshold = cyan_mean + 1 * cyan_std
+
+    print(f"Computed Cyan Threshold: {cyan_threshold}")
+    return cyan_threshold, merged_df
+
+def visualize_with_threshold(cyan_threshold):
+    for i in range(len(CZI_FOLDERS)):
+        czi_folder = CZI_FOLDERS[i]
+        np_folder = NP_FOLDERS[i]
+        for czi_img in os.listdir(czi_folder):
+            if czi_img.endswith((".czi", ".tif", ".tiff")):
+                czi_img_path = os.path.join(czi_folder, czi_img)
+                if czi_img.endswith(".czi"):
+                    cyan_data, green_data, magenta_data = destack_czi(czi_img_path)
+                else:
+                    cyan_data, green_data, magenta_data = destack_tiff(czi_img_path)
+
+                np_img = f"seg_{czi_img.split('.')[0]}AVG.tif.npy"
+                np_img_path = os.path.join(np_folder, np_img)
+                mask_data = np.load(np_img_path)
+                id_coordinates_dict = make_coordinate_dictionary(mask_data)
+
+                # # Compute ROI centers
+                avg_colours = average_roi_colours(id_coordinates_dict, cyan_data, green_data, magenta_data)
+                roi_centers = compute_roi_centers(id_coordinates_dict)
+
+                #Set threshold
+                thresholds = {"Cyan": cyan_threshold, "Green": 0, "Magenta": 0}
+
+                plot_drg_with_rois(cyan_data, roi_centers, avg_colours, thresholds, czi_img.split('.')[0])
+
+if __name__ == "__main__":
+    process_and_export_all_drgs()
+    cyan_threshold, merged_df = calculate_cyan_threshold()
+    plot_violin(merged_df, "Cyan", "All_Merged")
+    #plot_histogram(merged_df["cyan_intensity"].values, "Cyan", "All_Merged")
+    #visualize_with_threshold(cyan_threshold)
+
+# def main():
+#     # Import 3 channel img and destack
+#     for i in range(len(CZI_FOLDERS)):
+#         czi_folder = CZI_FOLDERS[i]
+#         np_folder = NP_FOLDERS[i]
+#         for czi_img in os.listdir(czi_folder):
+#             if czi_img.endswith((".czi", ".tif", ".tiff")):  # Support both formats
+#                 czi_img_path = os.path.join(czi_folder, czi_img)
+#                 # Destack czi file into separate channels
+#                 if czi_img.endswith(".czi"):
+#                     cyan_data, green_data, magenta_data = destack_czi(czi_img_path)
+#                 else:
+#                     cyan_data, green_data, magenta_data = destack_tiff(czi_img_path)
+
+#                 # Initialize variables to avoid UnboundLocalError
+#                 # cyan_data_tiff, green_data_tiff, magenta_data_tiff = None, None, None
+#                 # cyan_data_czi, green_data_czi, magenta_data_czi = None, None, None
+                
+#                 # # Destack image into separate channels
+#                 # if czi_img.endswith(".czi"):
+#                 #     cyan_data, green_data, magenta_data = destack_czi(czi_img_path)
+#                 #     cyan_data_czi, green_data_czi, magenta_data_czi = cyan_data, green_data, magenta_data
+#                 #     print(f"CZI Image Intensity Range: {cyan_data_czi.min()} to {cyan_data_czi.max()}")
+#                 #     print("HAHAHAH")
+#                 # else:
+#                 #     cyan_data, green_data, magenta_data = destack_tiff(czi_img_path)
+#                 #     cyan_data_tiff, green_data_tiff, magenta_data_tiff = cyan_data, green_data, magenta_data
+#                 #     print(f"TIFF Image Intensity Range: {cyan_data_tiff.min()} to {cyan_data_tiff.max()}")
+#                 #     print("HAHAHAH")
+
+#                 # Import masks from np
+#                 np_img = f"seg_{czi_img.split('.')[0]}AVG.tif.npy"
+#                 np_img_path = os.path.join(np_folder, np_img)
+#                 print(np_img_path)
+#                 mask_data = np.load(np_img_path)
+                
+#                 # Process mask data into dictionary of {ROI_ID : [(x,y)...()]} - id coordinates dict
+#                 # Initialize a dictionary to store the IDs and their coordinates (already done previously)
+#                 id_coordinates_dict = make_coordinate_dictionary(mask_data)
+
+#                 # Check dimensions match
+#                 if mask_data.shape != cyan_data.shape or \
+#                     mask_data.shape != green_data.shape or \
+#                     mask_data.shape != magenta_data.shape:
+#                     print(f"Data Dimension Mismatch for files: {czi_img_path} & {np_img_path}")
+#                     continue
+
+#                 # Initialize output dict {ROI_ID : (avg_cyan, avg_green, avg_magenta)}
+#                 avg_colours = average_roi_colours(id_coordinates_dict, cyan_data, green_data, magenta_data)
+
+#                 # Load mask
+#                 mask_data = np.load(np_img_path)
+#                 id_coordinates_dict = make_coordinate_dictionary(mask_data)
+
+#                 # Verify dimensions
+#                 if mask_data.shape != cyan_data.shape:
+#                     print(f"Data Dimension Mismatch for {czi_img}")
+#                     continue
+
+#                 # Below is for plotting the DRG image, with ROIs with dots 
+#                 # To see how they change as we change the threshold
+#                 # Load the DRG image (use one color channel or grayscale)
+#                 drg_image = cyan_data  # Or (cyan_data + green_data + magenta_data) / 3 for grayscale
+#                 # # Compute ROI centers
+#                 roi_centers = compute_roi_centers(id_coordinates_dict)
+#                 # # Define intensity thresholds for classification
+#                 thresholds = {"Cyan": cyan_threshold, "Green": 120, "Magenta": 110}  # Adjust as needed
+#                 print("Average Colours Dictionary Sample:", list(avg_colours.items())[:5])  # Check first 5
+#                 print("Thresholds:", thresholds)
+#                 # # Plot DRG with ROI overlay
+#                 plot_drg_with_rois(drg_image, roi_centers, avg_colours, thresholds, czi_img)
+
+#                 # TODO Thresholding algorithm (can be simple constant threshold)
+#                 # TODO classify into colour groups (e.g C=1 G=0 M=0)
+
+#                 # Output csv of data to appropriate folder. Turn off once not needed
+#                 # export_data(avg_colours, czi_img_path, czi_folder)
+
+#         # **Do not put in main. Main processes mice one after another.
+#         # This processes the output folder only, and needs to be done for the entire folder altogether
+#         # Ergo, not mice one at a time
+#         # After processing all mice in this virus folder, merge CSVs and plot histograms**
+#         virus_folder = os.path.join(OUTPUT_FOLDER, czi_folder)
+#         merged_df = merge_csvs_for_virus(virus_folder)
+
+#         if merged_df is not None:
+#             cyan_values = merged_df["cyan_intensity"]
+#             mean_cyan = cyan_values.mean()
+#             std_cyan = cyan_values.std()
+#             k = 2.5  # adjust this multiplier as needed
+
+#         # 3. Calculate threshold
+#         cyan_threshold = mean_cyan + k * std_cyan
+#         print(f"\nCGRP (cyan) threshold calculated as: {cyan_threshold:.2f} [mean={mean_cyan:.2f}, std={std_cyan:.2f}]")
+
+#         # Optional: histogram visualization with threshold line
+#         plt.hist(cyan_values, bins=100, color='c', alpha=0.6)
+#         plt.axvline(cyan_threshold, color='r', linestyle='--', label=f'Threshold: {cyan_threshold:.2f}')
+#         plt.title("CGRP Cyan Intensity Histogram with Threshold")
+#         plt.xlabel("Cyan Intensity")
+#         plt.ylabel("Frequency")
+#         plt.legend()
+#         plt.tight_layout()
+#         plt.show()
+            
+#         # Make histogram of all mice CSV in a folder. Can be used to find threshold, but Clarissa said no
+#         # if merged_df is not None:
+#         #     plot_histogram(merged_df["cyan_intensity"], "Cyan", f"All_Mice_{czi_folder}")
+#         #     plot_histogram(merged_df["green_intensity"], "Green", f"All_Mice_{czi_folder}")
+#         #     plot_histogram(merged_df["magenta_intensity"], "Magenta", f"All_Mice_{czi_folder}")
+
+#         # Make violin plot of all mice CSV in a folder. Clarissa says this is how we'll find the threshold of all colors
+#         # if merged_df is not None:
+#         #     plot_violin(merged_df, "Cyan", f"All_Mice_{czi_folder}")
+#         #     plot_violin(merged_df, "Green", f"All_Mice_{czi_folder}")
+#         #     plot_violin(merged_df, "Magenta", f"All_Mice_{czi_folder}")
+            
+# if __name__ == "__main__":
+#     main()
